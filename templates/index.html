@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>机器学习自动化Agent系统</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container-fluid">
+        <div class="row">
+            <!-- 侧边栏 -->
+            <div class="col-md-2 sidebar">
+                <div class="d-flex flex-column p-3 bg-light h-100">
+                    <a href="/" class="d-flex align-items-center mb-3 mb-md-0 me-md-auto link-dark text-decoration-none">
+                        <span class="fs-4">ML AutoAgent</span>
+                    </a>
+                    <hr>
+                    <ul class="nav nav-pills flex-column mb-auto">
+                        <li class="nav-item">
+                            <a href="#" class="nav-link active" id="nav-data">
+                                数据准备
+                            </a>
+                        </li>
+                        <li>
+                            <a href="#" class="nav-link link-dark" id="nav-train">
+                                模型训练
+                            </a>
+                        </li>
+                        <li>
+                            <a href="#" class="nav-link link-dark" id="nav-results">
+                                查看结果
+                            </a>
+                        </li>
+                        <li>
+                            <a href="#" class="nav-link link-dark" id="nav-predict">
+                                模型预测
+                            </a>
+                        </li>
+                        <li>
+                            <a href="#" class="nav-link link-dark" id="nav-mlflow">
+                                MLflow管理
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+            
+            <!-- 主内容区 -->
+            <div class="col-md-10 main-content">
+                <!-- 数据准备页面 -->
+                <div id="page-data" class="page active">
+                    <h2>数据准备</h2>
+                    <div class="card">
+                        <div class="card-body">
+                            <h5 class="card-title">上传数据文件</h5>
+                            <form id="upload-form" enctype="multipart/form-data">
+                                <div class="mb-3">
+                                    <input class="form-control" type="file" id="formFile" accept=".csv,.xls,.xlsx">
+                                    <div class="form-text">支持CSV、Excel文件格式</div>
+                                </div>
+                                <button type="submit" class="btn btn-primary">上传</button>
+                                <button type="button" class="btn btn-secondary" id="use-example">使用示例数据</button>
+                            </form>
+                        </div>
+                    </div>
+                    
+                    <div class="card mt-4" id="data-preview-card" style="display: none;">
+                        <div class="card-body">
+                            <h5 class="card-title">数据预览</h5>
+                            <div id="data-info" class="mb-3"></div>
+                            <div id="data-preview" class="table-responsive"></div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 模型训练页面 -->
+                <div id="page-train" class="page">
+                    <h2>模型训练</h2>
+                    <div class="card">
+                        <div class="card-body">
+                            <h5 class="card-title">训练参数配置</h5>
+                            <form id="train-form">
+                                <div class="mb-3">
+                                    <label for="target-var" class="form-label">目标变量</label>
+                                    <select class="form-select" id="target-var" required>
+                                        <option selected disabled value="">选择目标变量</option>
+                                    </select>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="instructions" class="form-label">用户指令</label>
+                                    <textarea class="form-control" id="instructions" rows="3" placeholder="请输入对建模的具体要求，如分类任务、最大运行时间等"></textarea>
+                                </div>
+                                <button type="submit" class="btn btn-primary">开始训练</button>
+                            </form>
+                        </div>
+                    </div>
+                    
+                    <div class="card mt-4">
+                        <div class="card-body">
+                            <h5 class="card-title">大模型建议</h5>
+                            <div id="llm-suggestions" class="mt-3">
+                                <div class="spinner-border text-primary" role="status">
+                                    <span class="visually-hidden">Loading...</span>
+                                </div>
+                                <p>正在获取大模型建议...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 查看结果页面 -->
+                <div id="page-results" class="page">
+                    <h2>模型训练结果</h2>
+                    <div class="card">
+                        <div class="card-body">
+                            <h5 class="card-title">最佳模型</h5>
+                            <div id="model-info">
+                                <p>请先训练模型</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="card mt-4" id="leaderboard-container">
+                        <div class="card-body">
+                            <h5 class="card-title">模型排行榜</h5>
+                            <div id="leaderboard" class="table-responsive">
+                                <p>尚无数据</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 模型预测页面 -->
+                <div id="page-predict" class="page">
+                    <h2>模型预测</h2>
+                    <div class="card">
+                        <div class="card-body">
+                            <h5 class="card-title">使用模型预测</h5>
+                            <button id="predict-btn" class="btn btn-primary">使用当前数据进行预测</button>
+                            
+                            <div id="prediction-results" class="mt-4 table-responsive" style="display: none;">
+                                <h6>预测结果</h6>
+                                <div id="predictions"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- MLflow管理页面 -->
+                <div id="page-mlflow" class="page">
+                    <h2>MLflow模型管理</h2>
+                    <div class="card">
+                        <div class="card-body">
+                            <h5 class="card-title">MLflow界面</h5>
+                            <button id="launch-mlflow-btn" class="btn btn-primary">启动MLflow UI</button>
+                            <button id="stop-mlflow-btn" class="btn btn-secondary ms-2">停止MLflow UI</button>
+                            
+                            <div class="mt-3">
+                                <p>启动后请访问: <a href="http://localhost:5000" target="_blank">http://localhost:5000</a></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- JS库 -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="/static/js/main.js"></script>
+</body>
+</html>
