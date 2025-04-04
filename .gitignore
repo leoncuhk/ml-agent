@@ -1,14 +1,26 @@
-yunwu.py
-
-# Python
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
+
+# --- Project Specific ---
+# Logs, Models, MLflow runs
+archive/
+logs/
+mlruns/
+models/
+study/
+uploads/
+
+# Data directory (optional, uncomment if data is large/sensitive)
+# data/
+
+# C extensions
 *.so
+
+# Distribution / packaging
 .Python
-env/
 build/
-develop-eggs/
 dist/
 downloads/
 eggs/
@@ -18,12 +30,54 @@ lib64/
 parts/
 sdist/
 var/
+wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+MANIFEST
 
-# H2O
-h2ologs/
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+.pytest_cache/
+.hypothesis/
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -37,13 +91,34 @@ ENV/
 env.bak/
 venv.bak/
 
+# IDEs and editors
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+*.tmproj
+.project
+.settings/
+*.DS_Store
+*.komodoproject
+
+# Miscellaneous
+*.bak
+*.swp
+*.swo
+
+# Cache and compiled files in src
+src/**/__pycache__/
+src/**/*.pyc
+
+# H2O
+h2ologs/
+
 # macOS
-.DS_Store
 .AppleDouble
 .LSOverride
 
 # Logs and databases
-*.log
 *.sqlite3
 
 # Model files (large binary files)
@@ -52,9 +127,6 @@ models/*.model
 
 # Pickle files 
 *.pkl
-
-# MLflow
-mlruns/
 
 # Uploaded data
 uploads/

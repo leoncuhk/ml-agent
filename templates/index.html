@@ -118,10 +118,24 @@
                             <h5 class="card-title">最佳模型</h5>
                             <div id="model-info">
                                 <p>请先训练模型</p>
+                                <!-- Placeholder for MLflow Run ID -->
+                                <p id="mlflow-run-info"></p> 
                             </div>
+                            <!-- Add Interpret Button -->
+                            <button id="interpret-btn" class="btn btn-info mt-2" style="display: none;">解释模型</button>
                         </div>
                     </div>
                     
+                    <!-- Add Interpretation Results Section -->
+                    <div class="card mt-4" id="interpretation-container" style="display: none;">
+                        <div class="card-body">
+                            <h5 class="card-title">模型解释</h5>
+                            <div id="interpretation-plots">
+                                <!-- Plot images will be loaded here -->
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="card mt-4" id="leaderboard-container">
                         <div class="card-body">
                             <h5 class="card-title">模型排行榜</h5>

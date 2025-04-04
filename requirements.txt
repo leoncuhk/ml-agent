@@ -1,21 +1,26 @@
 # 核心依赖
-h2o>=3.46.0
-pandas>=2.0.0
-numpy>=1.24.0
-openai>=1.0.0
-flask>=2.0.0
+h2o
+openai
+pandas
+flask
 
 # Web界面
 Werkzeug>=2.0.0
 Jinja2>=3.0.0
 
 # MLflow支持
-mlflow>=2.8.0
+mlflow
 
 # 数据处理
 scikit-learn>=1.2.0
 plotly>=5.18.0
+matplotlib
 
 # 其他工具
 python-dotenv>=1.0.0
-tqdm>=4.66.0 
+tqdm>=4.66.0
+
+# --- Phase 6 Additions ---
+# Async Task Queue
+celery>=5.0
+redis>=4.0 # For Celery broker/backend 

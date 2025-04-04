@@ -213,6 +213,8 @@ Apache License 2.0
 
 ## 参考
 
+https://github.com/business-science/ai-data-science-team/tree/master/examples/ml_agents
+
 本项目参考了以下资源：
 - H2O AutoML文档
 - OpenAI API文档
