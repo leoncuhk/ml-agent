@@ -15,6 +15,7 @@ import re
 from .llm_interface import initialize_llm_client
 from .h2o_executor import run_h2o_automl
 from .utils import setup_logging, parse_llm_params
+from . import data_preparer # Import the new module
 
 # LLM调用函数，参考yunwu.py
 def chat_with_llm(prompt, max_retries=3):
@@ -125,36 +126,259 @@ class H2OMLAgent:
         self.logger.info("H2OMLAgent initialized.")
 
     # --- Data Description ---
-    def _generate_data_description(self, df: pd.DataFrame, max_unique_values_to_list=10) -> str:
+    def _generate_data_description(self, df: pd.DataFrame, max_unique_values_to_list=10, high_cardinality_threshold=50, iqr_multiplier=1.5) -> str:
         self.logger.info(f"Generating data description for DataFrame with shape {df.shape}...")
-        description = f"### Data Summary\n"
-        description += f"- Shape: {df.shape[0]} rows, {df.shape[1]} columns\n\n"
+        description = f"### Data Summary\\n"
+        description += f"- Shape: {df.shape[0]} rows, {df.shape[1]} columns\\n\\n"
+
+        # Basic Info
         buffer = io.StringIO()
         df.info(buf=buffer)
         info_str = buffer.getvalue()
-        description += f"### Column Information (Types, Non-Null Counts):\n```\n{info_str}```\n"
+        description += f"### Column Information (Types, Non-Null Counts):\\n```\\n{info_str}```\\n"
+
+        # Missing Values
         missing_values = df.isnull().sum()
         missing_values = missing_values[missing_values > 0]
         if not missing_values.empty:
-            description += f"### Missing Value Counts:\n"
-            description += missing_values.to_string() + "\n\n"
+            description += f"### Missing Value Counts:\\n```\\n{missing_values.to_string()}```\\n\\n"
         else:
-            description += f"- No missing values detected.\n\n"
-        description += f"### Unique Value Analysis:\n"
+            description += f"- No missing values detected.\\n\\n"
+
+        description += f"### Feature Analysis:\\n"
+        high_card_features = []
+        potential_outlier_cols = []
+        numeric_cols = df.select_dtypes(include=['number']).columns
+
+        # Unique Value Analysis & High Cardinality Check
+        description += f"#### Unique Values & Cardinality:\\n"
         for col in df.columns:
             num_unique = df[col].nunique()
-            description += f"- Column '{col}': {num_unique} unique values.\n"
-            if num_unique <= max_unique_values_to_list and (df[col].dtype == 'object' or df[col].dtype.name == 'category'):
-                 unique_vals = df[col].unique()
-                 description += f"    Unique values: {list(unique_vals)}\n"
-        try:
-            numerical_stats = df.describe().to_string()
-            description += f"\n### Numerical Column Statistics:\n```\n{numerical_stats}```\n"
-        except Exception as e:
-             self.logger.warning(f"Could not generate numerical statistics (likely no numeric columns): {e}")
-             description += f"\n- No numerical columns found for descriptive statistics.\n"
-        self.logger.debug(f"Generated Data Description:\n{description}")
+            is_high_card = num_unique > high_cardinality_threshold
+            description += f"- **\'{col}\'**: {num_unique} unique values."
+            if is_high_card:
+                description += f" (High Cardinality - Threshold > {high_cardinality_threshold})"
+                high_card_features.append(col)
+            description += "\\n"
+
+            # List unique values only if low cardinality and categorical/object
+            if num_unique <= max_unique_values_to_list and (df[col].dtype == 'object' or pd.api.types.is_categorical_dtype(df[col].dtype)):
+                try:
+                    unique_vals = df[col].unique()
+                    # Limit displayed values if accidentally large list comes through
+                    display_vals = list(unique_vals[:max_unique_values_to_list])
+                    if len(unique_vals) > max_unique_values_to_list:
+                         display_vals.append("...")
+                    description += f"    - *Unique values*: {display_vals}\\n"
+                except Exception as e:
+                    self.logger.warning(f"Could not display unique values for column '{col}': {e}")
+        if high_card_features:
+            description += f"\\n*High Cardinality Columns Detected*: {high_card_features}\\n"
+
+
+        # Numerical Analysis: Statistics, Skewness, Outliers
+        if not numeric_cols.empty:
+            description += f"\\n#### Numerical Feature Analysis:\\n"
+            try:
+                numerical_stats = df[numeric_cols].describe().to_string()
+                description += f"##### Statistics:\\n```\\n{numerical_stats}```\\n"
+            except Exception as e:
+                self.logger.warning(f"Could not generate numerical statistics: {e}")
+
+            description += f"##### Skewness:\\n"
+            try:
+                 skewness = df[numeric_cols].skew()
+                 description += f"```\\n{skewness.to_string()}```\\n"
+                 highly_skewed = skewness[abs(skewness) > 1].index.tolist()
+                 if highly_skewed:
+                     description += f"*Highly Skewed Columns (|skewness| > 1)*: {highly_skewed}\\n"
+            except Exception as e:
+                self.logger.warning(f"Could not calculate skewness: {e}")
+
+
+            description += f"\\n##### Potential Outliers (Using IQR * {iqr_multiplier}):\\n"
+            try:
+                Q1 = df[numeric_cols].quantile(0.25)
+                Q3 = df[numeric_cols].quantile(0.75)
+                IQR = Q3 - Q1
+                lower_bound = Q1 - iqr_multiplier * IQR
+                upper_bound = Q3 + iqr_multiplier * IQR
+
+                outlier_counts = {}
+                for col in numeric_cols:
+                     outliers = df[(df[col] < lower_bound[col]) | (df[col] > upper_bound[col])]
+                     count = outliers.shape[0]
+                     if count > 0:
+                         outlier_counts[col] = count
+                         potential_outlier_cols.append(col)
+
+                if outlier_counts:
+                    description += f"```\\n"
+                    for col, count in outlier_counts.items():
+                         description += f"- {col}: {count} potential outliers\\n"
+                    description += f"```\\n"
+                    description += f"*Columns with Potential Outliers*: {potential_outlier_cols}\\n"
+                else:
+                    description += "- No potential outliers detected based on IQR method.\\n"
+            except Exception as e:
+                self.logger.warning(f"Could not perform IQR outlier analysis: {e}")
+        else:
+             description += f"\\n- No numerical columns found for detailed analysis (Statistics, Skewness, Outliers).\\n"
+
+        self.logger.debug(f"Generated Data Description:\\n{description}")
         return description
+
+    # --- LLM Data Preparation Planning --- NEW METHOD ---
+    def _get_llm_data_prep_plan(self, data_description: str, target_variable: str) -> list | None:
+        """
+        Prompts the LLM to generate a structured data preparation plan (list of steps).
+        """
+        self.logger.info("Getting LLM data preparation plan...")
+        prompt = f"""
+        As an expert Data Scientist, analyze the provided comprehensive data summary and target variable (`{target_variable}`) to devise a data preparation plan.
+        Your goal is to suggest specific steps to clean and prepare the data for modeling using the available operations: "impute_missing", "encode_categorical", "handle_outliers", "scale_numerical", "extract_date_features".
+
+        **Consider the following guidelines:**
+        - **Imputation:** Use "impute_missing" for columns listed with missing values. Choose a sensible strategy ('mean', 'median', 'mode').
+        - **Encoding:** Use "encode_categorical" for 'object' or 'category' type columns (excluding the target variable unless imputation was needed). Prefer 'one-hot'. Consider setting "drop_original": false for high cardinality features if you think the original might still be useful alongside encoding (though usually drop=true is fine).
+        - **Outliers:** If the summary indicates '*Columns with Potential Outliers*', use "handle_outliers" with strategy 'clip' for those numerical columns.
+        - **Scaling:** If the summary indicates '*Highly Skewed Columns*', consider using "scale_numerical" with strategy 'standard' or 'minmax' for those numerical columns *after* handling outliers. Standard scaling is generally preferred. Apply scaling only to numerical features (not the target or categorical features).
+        - **Date Features:** If any column looks like a date/time object (check Column Information), use "extract_date_features".
+        - **Target Variable:** Generally avoid modifying the target variable `'{{target_variable}}'`, except for necessary imputation. Do NOT scale or encode the target variable.
+        - **Order:** Think about the order. Usually: Impute -> Handle Outliers -> Extract Dates -> Encode Categorical -> Scale Numerical.
+
+        **Output ONLY a JSON list of operations.** Each object in the list should represent one step and conform to the required keys for each operation type:
+        - `impute_missing`: `{{ "operation": "impute_missing", "column": "col_name", "strategy": "mean|median|mode" }}`
+        - `encode_categorical`: `{{ "operation": "encode_categorical", "column": "col_name", "strategy": "one-hot", "drop_original": true|false }}`
+        - `handle_outliers`: `{{ "operation": "handle_outliers", "column": "col_name", "strategy": "clip", "iqr_multiplier": 1.5 }}` (strategy/multiplier are optional, defaults shown)
+        - `scale_numerical`: `{{ "operation": "scale_numerical", "column": "col_name", "strategy": "standard|minmax" }}` (strategy optional, default 'standard')
+        - `extract_date_features`: `{{ "operation": "extract_date_features", "column": "col_name", "drop_original": true|false }}`
+
+        Example JSON Output:
+        [
+            {{"operation": "impute_missing", "column": "Age", "strategy": "median"}},
+            {{"operation": "handle_outliers", "column": "Salary", "strategy": "clip"}},
+            {{"operation": "extract_date_features", "column": "RegistrationDate"}},
+            {{"operation": "encode_categorical", "column": "Gender", "strategy": "one-hot"}},
+            {{"operation": "scale_numerical", "column": "Salary", "strategy": "standard"}}
+        ]
+
+        **Input Data Summary:**
+        {data_description}
+
+        **Target Variable:** `{target_variable}`
+
+        **Instructions:**
+        Generate the JSON list of preparation steps based *only* on the data summary and the guidelines above. Be concise and focus on necessary steps identified in the summary. Ensure the output is valid JSON. Output *only* the JSON list, without any introductory text or explanations.
+        """
+        self.logger.debug(f"Sending the following prompt to LLM for data prep plan:\n{prompt}")
+        try:
+            # Using the existing llm_client setup in __init__
+            response = self.llm_client.chat.completions.create(
+                model="gpt-4o-mini", # Or your preferred model
+                messages=[
+                    {"role": "system", "content": "You are a data preparation planner. Output ONLY valid JSON."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.2, # Lower temperature for more deterministic, structured output
+                max_tokens=1000,
+                response_format={{"type": "json_object"}} # Request JSON output if API supports
+            )
+            raw_response = response.choices[0].message.content
+            self.logger.debug(f"LLM Raw Data Prep Plan Response:\n{raw_response}")
+
+            # Clean potential markdown ```json ... ``` tags
+            match = re.search(r'```json\s*([\s\S]*?)\s*```', raw_response, re.IGNORECASE)
+            if match:
+                json_str = match.group(1).strip()
+            else:
+                json_str = raw_response.strip()
+
+            # Attempt to parse the JSON string directly
+            prep_plan = json.loads(json_str)
+
+            # Validate basic structure (is it a list?)
+            if not isinstance(prep_plan, list):
+                 # Sometimes the response might be nested under a key like "steps"
+                 if isinstance(prep_plan, dict) and "steps" in prep_plan and isinstance(prep_plan["steps"], list):
+                    prep_plan = prep_plan["steps"]
+                 else:
+                    self.logger.error(f"LLM response for data prep plan is not a list: {prep_plan}")
+                    return None
+
+            self.logger.info(f"Successfully received and parsed data preparation plan: {len(prep_plan)} steps.")
+            return prep_plan
+        except json.JSONDecodeError as json_err:
+            self.logger.error(f"Failed to decode JSON response from LLM for data prep plan: {json_err}")
+            self.logger.error(f"LLM Raw Response was: {raw_response}")
+            return None
+        except Exception as e:
+            self.logger.error(f"Error calling LLM for data prep plan: {e}")
+            return None
+
+    # --- Execute Data Preparation Plan --- NEW METHOD ---
+    def _execute_data_prep_plan(self, df: pd.DataFrame, plan: list) -> pd.DataFrame:
+        """
+        Executes the data preparation steps defined in the plan.
+        """
+        if not plan:
+            self.logger.info("No data preparation plan provided or plan is empty. Skipping execution.")
+            return df
+
+        self.logger.info(f"Executing data preparation plan with {len(plan)} steps...")
+        current_df = df.copy() # Work on a copy
+
+        for i, step in enumerate(plan):
+            self.logger.info(f"Step {i+1}/{len(plan)}: {step}")
+            operation = step.get("operation")
+            column = step.get("column")
+
+            if not operation:
+                 self.logger.warning(f"Skipping invalid step (missing 'operation'): {step}")
+                 continue
+            # Column might not be needed for all ops, but most require it
+            if not column and operation not in []: # Add ops that don't need columns here
+                self.logger.warning(f"Skipping invalid step (missing 'column' for required op '{operation}'): {step}")
+                continue
+
+            try:
+                if operation == "impute_missing":
+                    strategy = step.get("strategy")
+                    if not strategy:
+                        self.logger.warning(f"Missing 'strategy' for impute_missing on column '{column}'. Skipping.")
+                        continue
+                    current_df = data_preparer.impute_missing(current_df, column, strategy)
+
+                elif operation == "encode_categorical":
+                    strategy = step.get("strategy")
+                    if not strategy:
+                        self.logger.warning(f"Missing 'strategy' for encode_categorical on column '{column}'. Skipping.")
+                        continue
+                    drop_original = step.get("drop_original", True)
+                    current_df = data_preparer.encode_categorical(current_df, column, strategy, drop_original)
+
+                elif operation == "handle_outliers": # NEW
+                    strategy = step.get("strategy", "clip") # Default strategy
+                    iqr_multiplier = step.get("iqr_multiplier", 1.5)
+                    current_df = data_preparer.handle_outliers(current_df, column, strategy, iqr_multiplier)
+
+                elif operation == "scale_numerical": # NEW
+                    strategy = step.get("strategy", "standard") # Default strategy
+                    current_df = data_preparer.scale_numerical(current_df, column, strategy)
+
+                elif operation == "extract_date_features": # NEW
+                    drop_original = step.get("drop_original", True)
+                    current_df = data_preparer.extract_date_features(current_df, column, drop_original)
+
+                else:
+                    self.logger.warning(f"Unsupported operation '{operation}' in step: {step}. Skipping.")
+
+            except Exception as e:
+                 self.logger.error(f"Error executing step {i+1} ({step}): {e}", exc_info=True)
+                 self.logger.warning("Continuing with the next preparation step despite the error.")
+
+        self.logger.info("Finished executing data preparation plan.")
+        return current_df
 
     # --- LLM Recommendations ---
     def _get_llm_recommendations(self, data_description: str, user_instructions: str, target_variable: str) -> str:
@@ -310,56 +534,86 @@ class H2OMLAgent:
         self.logger.info("--- H2O AutoML Execution Finished ---")
         return results
 
-    # --- Agent Invocation ---
+    # --- Main Agent Invocation --- MODIFIED ---
     def invoke_agent(self, data_raw: pd.DataFrame, user_instructions: str, target_variable: str, **kwargs):
+        """
+        Runs the full ML agent workflow: data description, LLM planning for data prep,
+        data prep execution, (future: feature eng), LLM config for H2O, H2O execution.
+        """
+        start_time = time.time()
         self.logger.info("--- Starting ML Agent Invocation ---")
-        self.logger.info(f"User Instructions: {user_instructions}")
-        self.logger.info(f"Target Variable: {target_variable}")
-        self.logger.info(f"Additional Parameters: {kwargs}")
-        self.results = {} # Reset results
-        
-        try:
-            # 1. Generate Data Description
-            data_desc = self._generate_data_description(data_raw)
-            self.results["data_description"] = data_desc
-            self.logger.info("\nData Description:")
-            self.logger.info(data_desc)
-            
-            # 2. Get LLM Recommendations
-            llm_recs = self._get_llm_recommendations(data_desc, user_instructions, target_variable)
-            self.results["llm_recommendations"] = llm_recs
-            self.logger.info("\nLLM Recommendations:")
-            self.logger.info(llm_recs)
-            
-            # 3. Generate H2O AutoML Parameters
-            h2o_params = self._generate_h2o_params(llm_recs, target_variable, kwargs)
-            self.results["h2o_parameters"] = h2o_params
-            self.logger.info("\nGenerated H2O AutoML Parameters:")
-            self.logger.info(h2o_params)
-            
-            # 4. Execute H2O AutoML using the executor function
-            self.logger.info("--- Executing H2O AutoML --- ")
-            # Pass necessary args like model_directory
-            h2o_results = run_h2o_automl(data_raw, target_variable, self.model_directory, h2o_params)
-            
-            # 5. Update Results Store
-            self.results.update(h2o_results) # Directly update from the results dict
-            
-            if self.results.get("error"): 
-                self.logger.error(f"H2O execution failed: {self.results['error']}")
-            else:
-                 self.logger.info("H2O AutoML execution finished.") # Don't assume success, check error
-                 if not self.results.get("best_model_id") and not self.results.get("error"):
-                      self.logger.warning("H2O AutoML finished without error, but no leader model found.")
-                 elif self.results.get("best_model_id"):
-                      self.logger.info("H2O AutoML execution successful (leader found).")
-                      
-        except Exception as e:
-             self.logger.error(f"An unexpected error occurred during agent invocation: {e}", exc_info=True)
-             self.results["error"] = f"Agent invocation failed: {e}"
-             
-        self.logger.info("--- ML Agent Invocation Finished ---")
-        return self.results
+        self.results = {} # Clear previous results
+
+        if not isinstance(data_raw, pd.DataFrame):
+            self.logger.error("Input data_raw must be a pandas DataFrame.")
+            raise TypeError("Input data_raw must be a pandas DataFrame.")
+        if target_variable not in data_raw.columns:
+             self.logger.error(f"Target variable '{target_variable}' not found in DataFrame columns.")
+             raise ValueError(f"Target variable '{target_variable}' not found in DataFrame columns.")
+
+        self.results['start_time'] = datetime.now().isoformat()
+        self.results['user_instructions'] = user_instructions
+        self.results['target_variable'] = target_variable
+        self.results['initial_data_shape'] = data_raw.shape
+
+        # 1. Generate Initial Data Description
+        data_description = self._generate_data_description(data_raw)
+        self.results['initial_data_description'] = data_description
+        self.logger.info("Generated initial data description.")
+
+        # 2. Get LLM Data Preparation Plan
+        prep_plan = self._get_llm_data_prep_plan(data_description, target_variable)
+        self.results['llm_data_prep_plan'] = prep_plan if prep_plan else "Failed to get/parse plan"
+
+        # 3. Execute Data Preparation Plan
+        if prep_plan:
+            prepared_df = self._execute_data_prep_plan(data_raw, prep_plan)
+            self.results['prepared_data_shape'] = prepared_df.shape
+            self.logger.info(f"Data preparation complete. Shape changed from {data_raw.shape} to {prepared_df.shape}")
+        else:
+            self.logger.warning("Skipping H2O phase as data preparation failed or produced no plan.")
+            prepared_df = data_raw # Use raw data if prep failed
+            self.results['prepared_data_shape'] = data_raw.shape
+
+
+        # --- TODO: Insert Feature Engineering Steps Here ---
+        #    - Generate description of *prepared_df*
+        #    - Call LLM for feature engineering plan
+        #    - Execute feature engineering plan -> final_df = ...
+        #    - For now, use prepared_df as final_df
+        final_df = prepared_df
+        self.results['final_data_shape'] = final_df.shape # Update once FE is added
+        self.logger.info("Feature engineering step skipped for now.")
+        # --- End TODO ---
+
+
+        # 4. Get LLM Recommendations for H2O (using FINAL data description)
+        #    Requires generating description for final_df first!
+        final_data_description = self._generate_data_description(final_df) # Use final data
+        self.results['final_data_description'] = final_data_description
+        llm_recommendations = self._get_llm_recommendations(final_data_description, user_instructions, target_variable)
+        self.results['llm_h2o_recommendations'] = llm_recommendations
+        self.logger.info("Generated LLM recommendations for H2O AutoML.")
+
+        # 5. Generate H2O Parameters (using LLM recommendations and user kwargs)
+        #    Need to refine how user_preferences are extracted from kwargs
+        user_preferences = {k: v for k, v in kwargs.items() if k in ['max_runtime_secs', 'max_models', 'exclude_algos', 'sort_metric', 'nfolds', 'stopping_metric', 'stopping_rounds', 'stopping_tolerance']}
+        h2o_params = self._generate_h2o_params(llm_recommendations, target_variable, user_preferences)
+        self.results['h2o_parameters_used'] = h2o_params
+        self.logger.info(f"Generated H2O parameters: {h2o_params}")
+
+        # 6. Run H2O AutoML (using FINAL data)
+        h2o_results = self._run_h2o_automl(final_df, target_variable, h2o_params) # Use final_df
+        self.results.update(h2o_results) # Merge H2O results
+        self.logger.info("H2O AutoML execution finished.")
+
+        end_time = time.time()
+        self.results['total_duration_seconds'] = round(end_time - start_time, 2)
+        self.results['end_time'] = datetime.now().isoformat()
+
+        self.logger.info(f"--- ML Agent Invocation Finished (Duration: {self.results['total_duration_seconds']}s) ---")
+        # Optionally save results to a log file
+        self._save_results_log()
 
     # --- Result Reporting ---
     def get_leaderboard(self) -> pd.DataFrame | None:
@@ -424,6 +678,30 @@ class H2OMLAgent:
             summary += "> Status: Unknown (Likely failed before generating leaderboard).\n\n"
 
         return summary
+
+    # --- Helper to save results --- NEW ---
+    def _save_results_log(self):
+        """Saves the results dictionary to a JSON file in the log path."""
+        if not self.log:
+            return
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            log_file = os.path.join(self.log_path, f"agent_results_{timestamp}.json")
+
+            # Convert unserializable items (like DataFrames) to strings or summaries
+            serializable_results = {}
+            for key, value in self.results.items():
+                 if isinstance(value, pd.DataFrame):
+                     serializable_results[key] = value.to_string() # Or just shape, columns etc.
+                 # Add checks for other potential non-serializable types if needed
+                 else:
+                     serializable_results[key] = value
+
+            with open(log_file, 'w') as f:
+                json.dump(serializable_results, f, indent=4)
+            self.logger.info(f"Agent results saved to {log_file}")
+        except Exception as e:
+            self.logger.error(f"Failed to save agent results log: {e}")
 
 # --- Example Usage (REMOVE THIS - Moved to run_agent.py) ---
 # if __name__ == "__main__":

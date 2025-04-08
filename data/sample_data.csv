@@ -1,0 +1,14 @@
+ID,Value1,Value2,Value3_NumericStr,Category,CategoryHighCard,EventDate,ConstantCol,Description,WhitespaceCol
+1,10,15.5, '100',A,Apple,2023-01-15,Const,First event,  leading_space
+2,12,18.2, '200',B,Banana,20 Feb 2023,Const,Second event,trailing_space  
+3,1000,22.0, '300',A,Apple,2023/03/10,Const,Outlier value,  both_spaces  
+4,15,16.8, '400',C,Cherry,04/05/2023,Const,Third event,no_space
+5,13,NaN, '500',B,Banana,May 12 2023,Const,Fourth event,tab	character
+6,11,14.1, '600',A,Apple,2023-06-18,Const,Fifth event,  leading_space
+7,-50,25.3, 'Invalid',C,Cherry,2023-07-22,Const,Negative outlier,trailing_space  
+8,14,17.9, '800',B,Date,2023-08-30,Const,Sixth event,  both_spaces  
+9,NaN,16.0, '900',D,Date,2023-09-15,Const,Missing Value1,no_space
+10,12,18.2, '200',B,Banana,20 Feb 2023,Const,Duplicate Row,trailing_space  
+11,20,20.0, '1000',E,Elderberry,2023-10-01,Const,New category E,tab	character
+12,22,21.5, '1100',F,Fig,2023-11-25,Const,New category F,  leading_space
+13,,, '1200',G,Grape,2023-12-31,Const,All Missing Values,trailing_space  
