@@ -10,6 +10,7 @@ Jinja2>=3.0.0
 
 # MLflow支持
 mlflow
+xgboost
 
 # 数据处理
 scikit-learn>=1.2.0

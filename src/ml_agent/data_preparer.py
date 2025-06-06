@@ -10,6 +10,113 @@ import sys # Import sys module
 # Get the logger instance from the main agent module or configure a specific one
 logger = logging.getLogger('ml_agent.data_preparer')
 
+class DataPreparer:
+    def __init__(self, logger=None):
+        self.logger = logger or logging.getLogger(__name__)
+
+    def process(self, df: pd.DataFrame, plan: list) -> pd.DataFrame:
+        """
+        Executes the data preparation steps defined in the plan.
+        """
+        df_copy = df.copy()
+        for i, step in enumerate(plan):
+            action = step.get("action")
+            params = step.get("parameters", {})
+            self.logger.info(f"Executing Step {i+1}/{len(plan)}: {action} with params {params}")
+            
+            try:
+                if action == "impute":
+                    df_copy = self._impute(df_copy, **params)
+                elif action == "scale":
+                    df_copy = self._scale(df_copy, **params)
+                elif action == "encode":
+                    df_copy = self._encode(df_copy, **params)
+                elif action == "drop":
+                    df_copy = self._drop(df_copy, **params)
+                elif action == "create_interaction":
+                     df_copy = self._create_interaction(df_copy, **params)
+                else:
+                    self.logger.warning(f"Unsupported action '{action}' in step: {step}. Skipping.")
+            except Exception as e:
+                self.logger.error(f"Error executing step {i+1} ({step}): {e}", exc_info=True)
+                # Continue with the next step
+        return df_copy
+
+    def _impute(self, df: pd.DataFrame, column: str, strategy: str) -> pd.DataFrame:
+        if column not in df.columns:
+            self.logger.warning(f"Column '{column}' not found for imputation. Skipping.")
+            return df
+        
+        fill_value = None
+        if strategy == "mean":
+            fill_value = df[column].mean()
+        elif strategy == "median":
+            fill_value = df[column].median()
+        elif strategy == "most_frequent":
+            fill_value = df[column].mode()[0]
+        else:
+            self.logger.warning(f"Invalid imputation strategy '{strategy}'. Skipping.")
+            return df
+            
+        df[column].fillna(fill_value, inplace=True)
+        self.logger.info(f"Imputed column '{column}' with strategy '{strategy}'.")
+        return df
+
+    def _scale(self, df: pd.DataFrame, column: str, method: str) -> pd.DataFrame:
+        if column not in df.columns:
+            self.logger.warning(f"Column '{column}' not found for scaling. Skipping.")
+            return df
+
+        scaler = None
+        if method == "standard":
+            scaler = StandardScaler()
+        elif method == "min_max":
+            scaler = MinMaxScaler()
+        else:
+            self.logger.warning(f"Invalid scaling method '{method}'. Skipping.")
+            return df
+            
+        df[[column]] = scaler.fit_transform(df[[column]])
+        self.logger.info(f"Scaled column '{column}' with method '{method}'.")
+        return df
+
+    def _encode(self, df: pd.DataFrame, column: str, method: str) -> pd.DataFrame:
+        if column not in df.columns:
+            self.logger.warning(f"Column '{column}' not found for encoding. Skipping.")
+            return df
+
+        if method == "one_hot":
+            dummies = pd.get_dummies(df[column], prefix=column, drop_first=True)
+            df = pd.concat([df.drop(column, axis=1), dummies], axis=1)
+            self.logger.info(f"One-hot encoded column '{column}'.")
+        else:
+            self.logger.warning(f"Invalid encoding method '{method}'. Skipping.")
+            
+        return df
+
+    def _drop(self, df: pd.DataFrame, column: str) -> pd.DataFrame:
+        if column in df.columns:
+            df.drop(column, axis=1, inplace=True)
+            self.logger.info(f"Dropped column '{column}'.")
+        else:
+            self.logger.warning(f"Column '{column}' not found for dropping. Skipping.")
+        return df
+
+    def _create_interaction(self, df: pd.DataFrame, columns: list) -> pd.DataFrame:
+        if len(columns) != 2:
+            self.logger.warning(f"Interaction requires exactly two columns. Got {columns}. Skipping.")
+            return df
+        
+        col1, col2 = columns[0], columns[1]
+        if col1 not in df.columns or col2 not in df.columns:
+            self.logger.warning(f"One or both columns for interaction not found: {columns}. Skipping.")
+            return df
+        
+        new_col_name = f"{col1}_x_{col2}"
+        df[new_col_name] = df[col1] * df[col2]
+        self.logger.info(f"Created interaction feature '{new_col_name}'.")
+        return df
+
 def impute_missing(df: pd.DataFrame, column: str, strategy: str = 'mean') -> pd.DataFrame:
     """
     Imputes missing values in a specified column using mean, median, or mode.
