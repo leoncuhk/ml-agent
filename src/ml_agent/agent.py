@@ -11,6 +11,8 @@ from dotenv import load_dotenv
 import io
 import re
 import functools
+import shutil
+from h2o.exceptions import H2OStartupError
 
 # Imports from other modules within this package
 from .llm_interface import initialize_llm_client
@@ -48,6 +50,15 @@ class H2OMLAgent:
         self.config = {}
         self.data_preparer = DataPreparer(self.logger)
         self.logger.info("H2OMLAgent initialized.")
+
+    def _check_java_installed(self):
+        """Checks if Java is installed and available in the system's PATH."""
+        self.logger.info("Checking for Java installation...")
+        if shutil.which('java'):
+            self.logger.info("Java is found in PATH.")
+            return True
+        self.logger.error("Java is not found in PATH.")
+        return False
 
     def _generate_data_description(self, df: pd.DataFrame, max_unique_values_to_list=10) -> str:
         self.logger.info(f"Generating data description for DataFrame with shape {df.shape}...")
@@ -122,9 +133,16 @@ Provide a JSON plan for data preparation and feature engineering. The plan shoul
 
         # Extract the list of steps if the plan is a dictionary
         steps = []
-        if isinstance(plan, dict) and 'plan' in plan and isinstance(plan.get('plan'), list):
-            steps = plan['plan']
-            self.logger.info("Extracted plan from dictionary wrapper.")
+        if isinstance(plan, dict):
+            if 'steps' in plan and isinstance(plan.get('steps'), list):
+                steps = plan['steps']
+                self.logger.info("Extracted 'steps' from dictionary wrapper.")
+            elif 'plan' in plan and isinstance(plan.get('plan'), list):
+                steps = plan['plan']
+                self.logger.info("Extracted 'plan' from dictionary wrapper.")
+            elif 'data_preparation_plan' in plan and isinstance(plan.get('data_preparation_plan'), list):
+                steps = plan['data_preparation_plan']
+                self.logger.info("Extracted 'data_preparation_plan' from dictionary wrapper.")
         elif isinstance(plan, list):
             steps = plan
         
@@ -134,7 +152,7 @@ Provide a JSON plan for data preparation and feature engineering. The plan shoul
             
         self.logger.info(f"Executing data preparation plan with {len(steps)} steps...")
         df_prepared = self.data_preparer.process(df, steps)
-        self.logger.info("Data preparation plan executed successfully.")
+        self.logger.info(f"Data preparation plan executed successfully. New data shape: {df_prepared.shape}")
         return df_prepared
 
     def _get_llm_recommendations(self, data_description, user_prompt):
@@ -188,6 +206,13 @@ sort_metric: AUC
     def _run_h2o_automl(self, data_prepared: pd.DataFrame, h2o_params: dict):
         self.logger.info("--- Starting H2O AutoML Execution ---")
         try:
+            if not self._check_java_installed():
+                error_message = (
+                    "Cannot find Java. Please install the latest JRE from\n"
+                    "http://docs.h2o.ai/h2o/latest-stable/h2o-docs/welcome.html#java-requirements"
+                )
+                raise H2OStartupError(error_message)
+
             h2o.init(nthreads=-1, max_mem_size="8g")
             self.logger.info("H2O initialized.")
             
@@ -236,6 +261,25 @@ sort_metric: AUC
                 model_path = h2o.save_model(model=aml.leader, path=self.model_directory, force=True)
                 self.results['best_model_path'] = model_path
                 self.logger.info(f"Best model saved to: {model_path}")
+
+                # --- Enhanced Model Evaluation ---
+                # Log confusion matrix for classification tasks
+                if self.task == "classification":
+                    cm = aml.leader.confusion_matrix(valid=True)
+                    if cm:
+                        self.results['confusion_matrix'] = cm.table.as_data_frame().to_dict()
+                        self.logger.info(f"Confusion Matrix (Validation):\n{cm.table}")
+
+                # Log feature importance for all model types
+                try:
+                    fi = aml.leader.varimp(use_pandas=True)
+                    if fi is not None:
+                        self.results['feature_importance'] = fi.to_dict('records')
+                        self.logger.info(f"Feature Importance:\n{fi}")
+                except Exception as e:
+                    self.logger.warning(f"Could not retrieve feature importance: {e}")
+                # --- End of Enhanced Evaluation ---
+
                 self.results['status'] = 'Completed Successfully'
             else:
                 self.logger.warning("H2O AutoML finished, but no leader model found.")
@@ -310,6 +354,10 @@ sort_metric: AUC
             return lb
         self.logger.warning("Stored leaderboard is not a Pandas DataFrame.")
         return None
+
+    def get_results(self) -> dict:
+        """Return the results dictionary containing all execution results."""
+        return self.results
 
     def get_workflow_summary(self, markdown=False) -> str:
         summary = "### ML Agent Workflow Summary\n\n"
